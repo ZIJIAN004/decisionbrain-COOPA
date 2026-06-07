@@ -1,0 +1,15 @@
+name: coopa_env
+channels:
+  - conda-forge
+dependencies:
+  # ── Python ──────────────────────────────────────────────────────────────
+  - python=3.12
+
+  # ── Pyomo solver binaries (non-pip, required by mathematical_optimizer_agent)
+  - glpk=5.0
+  - ipopt=3.14
+
+  # ── All Python packages installed via pip from requirements.txt ───────────
+  - pip
+  - pip:
+      - -r requirements.txt

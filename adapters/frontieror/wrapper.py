@@ -14,35 +14,45 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import resource
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-# Verified on the bhz host (systemd 255, cgroup v2 with the memory controller):
-# a process that exceeds MemoryMax is SIGKILLed inside its own scope and the
-# host is unaffected. The scope covers every descendant, so the solver process that
-# load_object_from_python_file imports and runs counts against the same cap.
+from .sandbox import build_command
+
+# Each task gets its own CPU-limited scope beneath the shared FrontierOR slice.
+# MemoryMax is enforced by that parent slice, so all concurrent Agent, solver,
+# and Formatter descendants contribute to one aggregate limit.
 SCOPE_CMD = ["systemd-run", "--user", "--scope", "-q"]
 
 
-def run_capped(command: list[str], mem_gb: int, timeout_s: int, cwd: Path, log_path: Path) -> dict:
+def run_capped(
+    command: list[str], slice_name: str, cpu_cores: int, timeout_s: int, cwd: Path, log_path: Path,
+    sandbox: dict[str, Path] | None = None,
+) -> dict:
+    if sandbox:
+        command = build_command(command, repo=cwd, **sandbox)
     argv = SCOPE_CMD + [
-        "-p", f"MemoryMax={mem_gb}G",
-        "-p", "MemorySwapMax=0",
+        "--slice", slice_name,
+        "-p", f"CPUQuota={cpu_cores * 100}%",
         *command,
     ]
     started = time.time()
     timed_out = False
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("wb") as log:
-        proc = subprocess.Popen(argv, cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(
+            argv, cwd=str(cwd), stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+        )
         try:
             returncode = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             timed_out = True
-            proc.kill()
+            os.killpg(proc.pid, signal.SIGKILL)
             returncode = proc.wait()
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
 
@@ -53,7 +63,8 @@ def run_capped(command: list[str], mem_gb: int, timeout_s: int, cwd: Path, log_p
         "cpu_user_s": round(usage.ru_utime, 1),
         "cpu_sys_s": round(usage.ru_stime, 1),
         "wall_s": round(time.time() - started, 1),
-        "mem_cap_gb": mem_gb,
+        "memory_slice": slice_name,
+        "cpu_quota_cores": cpu_cores,
         "timeout_s": timeout_s,
         "log": str(log_path),
     }
@@ -73,10 +84,16 @@ def classify(returncode: int, timed_out: bool) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mem-gb", type=int, required=True)
+    parser.add_argument("--slice", required=True)
+    parser.add_argument("--cpu-cores", type=int, required=True)
     parser.add_argument("--timeout", type=int, required=True)
     parser.add_argument("--cwd", type=Path, required=True)
     parser.add_argument("--log", type=Path, required=True)
+    parser.add_argument("--sandbox-workspace", type=Path)
+    parser.add_argument("--sandbox-python-env", type=Path)
+    parser.add_argument("--sandbox-index", type=Path)
+    parser.add_argument("--sandbox-instance", type=Path)
+    parser.add_argument("--sandbox-problem", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -84,7 +101,22 @@ def main() -> int:
     if not command:
         parser.error("no command given")
 
-    record = run_capped(command, args.mem_gb, args.timeout, args.cwd, args.log)
+    sandbox = None
+    values = [args.sandbox_workspace, args.sandbox_python_env, args.sandbox_index,
+              args.sandbox_instance, args.sandbox_problem]
+    if any(values):
+        if not all(values):
+            parser.error("all sandbox paths are required together")
+        sandbox = {
+            "workspace": args.sandbox_workspace,
+            "python_env": args.sandbox_python_env,
+            "index": args.sandbox_index,
+            "instance": args.sandbox_instance,
+            "problem": args.sandbox_problem,
+        }
+    record = run_capped(
+        command, args.slice, args.cpu_cores, args.timeout, args.cwd, args.log, sandbox
+    )
     json.dump(record, sys.stdout)
     sys.stdout.write("\n")
     return 0

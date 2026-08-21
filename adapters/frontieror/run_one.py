@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -48,7 +49,18 @@ STATEMENT_FOOTER = (
 
 
 def build_prompt(question: str, formulation, format_formulation_prompt) -> str:
-    return STATEMENT_HEADER + question + STATEMENT_FOOTER + format_formulation_prompt(formulation)
+    execution_contract = (
+        f"\n\nEvery individual solver execution has a hard limit of "
+        f"{config.SOLVER_TIMEOUT_SECONDS} seconds. Set the solver's native time limit to "
+        "that value and return the best incumbent when the limit is reached."
+    )
+    return (
+        STATEMENT_HEADER
+        + question
+        + STATEMENT_FOOTER
+        + format_formulation_prompt(formulation)
+        + execution_contract
+    )
 
 
 def extract_formulation_phase(question: str, model_id: str) -> tuple[object, dict]:
@@ -95,6 +107,8 @@ def extract_formulation_phase(question: str, model_id: str) -> tuple[object, dic
 
 
 def run(paper_id: str, case: dict, model_name: str, log_path: Path | None = None) -> dict:
+    os.environ["ADAPTER_FRONTIEROR_MODE"] = "1"
+    os.environ.setdefault("ADAPTER_SOLVER_TIMEOUT", str(config.SOLVER_TIMEOUT_SECONDS))
     config.ensure_import_path()
     config.configure_llm_env()
 
@@ -108,7 +122,11 @@ def run(paper_id: str, case: dict, model_name: str, log_path: Path | None = None
     config.configure_llm_env(force=True)
 
     model_id = config.litellm_model_id(model_name)
-    workspace = config.stage_workspace(paper_id)
+    workspace = (
+        config.WORKSPACE_ROOT / paper_id
+        if os.environ.get("ADAPTER_WORKSPACE_PRESTAGED") == "1"
+        else config.stage_workspace(paper_id)
+    )
     question = config.build_question(paper_id)
 
     started = time.time()
@@ -122,7 +140,9 @@ def run(paper_id: str, case: dict, model_name: str, log_path: Path | None = None
     )
 
     prompt = build_prompt(question, formulation, format_formulation_prompt)
-    manager = create_manager_agent(model_id=model_id, working_directory=str(workspace))
+    manager = create_manager_agent(
+        model_id=model_id, working_directory=str(workspace), allow_web=False
+    )
 
     solve_started = time.time()
     error = None

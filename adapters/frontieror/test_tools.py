@@ -15,6 +15,7 @@ is not installed; the reading logic under test is the same either way.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import types
@@ -40,6 +41,7 @@ from general_tools.file_editing.file_editing_tools import (  # noqa: E402
     MAX_READ_BYTES,
     TRUNCATION_NOTICE,
     ListDir,
+    LoadObjectFromPythonFile,
     SeeFile,
 )
 
@@ -125,6 +127,22 @@ def main() -> int:
         "all files listed",
         all(name in out for name in ("small.txt", "notes.md", "huge.json")),
     )
+
+    print("bounded solver execution:")
+    (work / "solver.py").write_text(
+        "def solve_problem():\n    return {'objective': 7, 'x': [1, 0]}\n",
+        encoding="utf-8",
+    )
+    os.environ["ADAPTER_FRONTIEROR_MODE"] = "1"
+    os.environ["ADAPTER_SOLVER_TIMEOUT"] = "5"
+    result = LoadObjectFromPythonFile(str(work)).forward("solver.py", "solve_problem")()
+    check("solver result is returned", result["objective"] == 7)
+    check(
+        "solver result is checkpointed atomically",
+        json.loads((work / "candidate_solution.json").read_text(encoding="utf-8")) == result,
+    )
+    os.environ.pop("ADAPTER_FRONTIEROR_MODE", None)
+    os.environ.pop("ADAPTER_SOLVER_TIMEOUT", None)
 
     print()
     if failures:

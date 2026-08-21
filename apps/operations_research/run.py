@@ -26,7 +26,7 @@ from general_tools.file_editing.file_editing_tools import (
 # import model utilities
 from .model_utils import build_model
 
-def create_manager_agent(model_id="gpt-4.1", working_directory=None):
+def create_manager_agent(model_id="gpt-4.1", working_directory=None, allow_web=True):
     """
     Create a manager agent for operations research problems.
 
@@ -43,13 +43,14 @@ def create_manager_agent(model_id="gpt-4.1", working_directory=None):
         Path(working_directory).mkdir(parents=True, exist_ok=True)
     print(f"Working directory: {working_directory}")
 
-    # Create the web-browsing agent
-    downloads_folder = Path(working_directory) / "downloads"
-    downloads_folder = str(downloads_folder)  # Ensure downloads_folder is a string
-    web_browsing_agent = create_web_browsing_agent(model_id=model_id, downloads_folder=downloads_folder)
+    web_browsing_agent = None
+    if allow_web:
+        downloads_folder = str(Path(working_directory) / "downloads")
+        web_browsing_agent = create_web_browsing_agent(
+            model_id=model_id, downloads_folder=downloads_folder
+        )
 
-    # Managed agents shared by the optimizer agents
-    managed_agents_for_optimizers = [web_browsing_agent]
+    managed_agents_for_optimizers = [web_browsing_agent] if web_browsing_agent else []
 
     # Create the mathematical optimizer agent
     mathematical_optimizer_agent = create_mathematical_optimizer_agent(
@@ -90,12 +91,13 @@ def create_manager_agent(model_id="gpt-4.1", working_directory=None):
             )
 
     manager_managed_agents = [
-        web_browsing_agent,
         general_optimizer_agent,
         mathematical_optimizer_agent,
         combinatorial_optimizer_agent,
         metaheuristic_optimizer_agent,
     ]
+    if web_browsing_agent is not None:
+        manager_managed_agents.insert(0, web_browsing_agent)
 
     # Create the manager agent
     manager_agent = CodeAgent(

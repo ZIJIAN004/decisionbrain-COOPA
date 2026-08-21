@@ -1,0 +1,6 @@
+[Unit]
+Description=Aggregate resource boundary for COOPA FrontierOR evaluation
+
+[Slice]
+MemoryMax=100G
+MemorySwapMax=0

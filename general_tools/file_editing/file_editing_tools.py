@@ -1,7 +1,12 @@
-from smolagents.tools import Tool
-import os
-from typing import Any
 import importlib.util
+import json
+import os
+import signal
+import subprocess
+import sys
+from typing import Any
+
+from smolagents.tools import Tool
 
 
 # Bounded-read limits. Ported from DecisionBrain's workspace tools so that no
@@ -414,19 +419,18 @@ class LoadObjectFromPythonFile(Tool):
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"The file {filename} does not exist.")
 
-        # Create a module spec
+        if os.environ.get("ADAPTER_FRONTIEROR_MODE") == "1":
+            timeout = int(os.environ.get("ADAPTER_SOLVER_TIMEOUT", "600"))
+            return _BoundedPythonCallable(file_path, object_name, self.working_dir, timeout)
+
         module_name = os.path.splitext(os.path.basename(file_path))[0]
         spec = importlib.util.spec_from_file_location(module_name, file_path)
-
         if spec is None or spec.loader is None:
             raise ImportError(f"Could not load spec for file {filename}")
-
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-
         if not hasattr(module, object_name):
             raise AttributeError(f"The object {object_name} was not found in {filename}")
-
         return getattr(module, object_name)
 
     def _safe_path(self, path: str) -> str:
@@ -436,3 +440,62 @@ class LoadObjectFromPythonFile(Tool):
         if not abs_path.startswith(abs_working_dir):
             raise PermissionError("Access outside the working directory is not allowed.")
         return abs_path
+
+
+class _BoundedPythonCallable:
+    """Execute an Agent-authored solver function in a bounded child process."""
+
+    def __init__(self, file_path: str, object_name: str, working_dir: str, timeout: int):
+        self.file_path = file_path
+        self.object_name = object_name
+        self.working_dir = working_dir
+        self.timeout = timeout
+
+    def __call__(self, *args, **kwargs):
+        request = {
+            "file": self.file_path,
+            "object": self.object_name,
+            "args": args,
+            "kwargs": kwargs,
+        }
+        request_path = os.path.join(self.working_dir, ".solver-request.json")
+        response_path = os.path.join(self.working_dir, ".solver-response.json")
+        with open(request_path, "w", encoding="utf-8") as handle:
+            json.dump(request, handle, default=str)
+        try:
+            environment = os.environ.copy()
+            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            environment["PYTHONPATH"] = os.pathsep.join(
+                item for item in (repo_root, environment.get("PYTHONPATH")) if item
+            )
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "adapters.frontieror.solver_worker",
+                    request_path,
+                    response_path,
+                ],
+                cwd=self.working_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+                env=environment,
+            )
+            stdout, stderr = process.communicate(timeout=self.timeout)
+        except subprocess.TimeoutExpired as exc:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:  # pragma: no cover - production execution is Linux
+                process.kill()
+            process.wait()
+            raise TimeoutError(f"solver execution exceeded {self.timeout} seconds") from exc
+        if process.returncode != 0:
+            detail = (stderr or stdout)[-4000:]
+            raise RuntimeError(f"solver process failed: {detail}")
+        with open(response_path, encoding="utf-8") as handle:
+            response = json.load(handle)
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error") or "solver process failed")
+        return response.get("result")

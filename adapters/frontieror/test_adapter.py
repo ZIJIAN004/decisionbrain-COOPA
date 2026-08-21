@@ -14,7 +14,6 @@ from __future__ import annotations
 import importlib
 import json
 import os
-import sys
 import tempfile
 import types
 from pathlib import Path
@@ -133,6 +132,7 @@ def main() -> int:
     prompt = build_prompt(question, formulation, format_formulation_prompt)
     check("manager prompt keeps the statement", "A plant ships to customers" in prompt)
     check("manager prompt keeps the formulation", "## PARAMETERS:" in prompt)
+    check("manager prompt states the solver limit", "600 seconds" in prompt)
     check("a file reference reaches the manager as a reference", "instance.json:Q" in prompt)
     check(
         "the manager is no longer told to write a parameters file",
@@ -142,6 +142,10 @@ def main() -> int:
     print("model ids:")
     check("a bare name is qualified", config.litellm_model_id("deepseek-v4-flash") == "openai/deepseek-v4-flash")
     check("a qualified name is left alone", config.litellm_model_id("gemini/x") == "gemini/x")
+    check("agent timeout defaults to 7200 seconds", config.TASK_TIMEOUT_SECONDS == 7200)
+    check("solver timeout defaults to 600 seconds", config.SOLVER_TIMEOUT_SECONDS == 600)
+    check("system CPU budget defaults to 24 cores", config.TOTAL_CPU_CORES == 24)
+    check("eight tasks share a 100 GB default", config.JOBS == 8 and config.TOTAL_MEMORY_GB == 100)
 
     print("web search:")
     os.environ.pop("SERPER_API_KEY", None)
@@ -152,6 +156,34 @@ def main() -> int:
     )
     os.environ["SERPER_API_KEY"] = "a-real-looking-key-from-a-stray-dotenv"
     config.configure_llm_env(force=True)
+
+    print("fixed post-processing:")
+    from .formatter import format_candidate
+
+    check(
+        "formatter refuses to invent a solution without a candidate",
+        format_candidate("demo2026", "unused")["outcome"] == "no_candidate",
+    )
+
+    print("sandbox:")
+    from .sandbox import build_command
+
+    python_env = root / "python"
+    python_env.mkdir()
+    sandbox_command = build_command(
+        ["python", "run.py"],
+        repo=config.REPO_ROOT,
+        python_env=python_env,
+        workspace=workspace,
+        index=index,
+        instance=root / "instances" / "demo2026" / "instance" / "large_instance_0.json",
+        problem=root / "problems" / "demo2026" / "input" / "problem.md",
+    )
+    rendered = " ".join(map(str, sandbox_command))
+    check("sandbox uses bubblewrap", sandbox_command[0] == "bwrap")
+    check("sandbox exposes only the selected instance", "large_instance_0.json" in rendered)
+    check("sandbox does not expose reference solutions", "gurobi_solution" not in rendered)
+    check("sandbox does not expose hidden checker", "feasibility_check.py" not in rendered)
     check(
         "a key already in the environment is overwritten",
         os.environ["SERPER_API_KEY"] == config.DISABLED_SEARCH_KEY,

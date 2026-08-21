@@ -1,6 +1,7 @@
 google_search_results==2.4.2
 huggingface_hub==0.36.0
 Jinja2==3.1.6
+jsonschema==4.25.1
 langchain==0.3.25
 langchain_text_splitters==0.3.8
 loguru==0.7.3

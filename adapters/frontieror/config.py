@@ -37,9 +37,12 @@ PROBLEM_ROOT = Path(
 RUNS_ROOT = Path(os.environ.get("ADAPTER_RUNS_ROOT", "/home/bhz/baselines/coopa-runs"))
 WORKSPACE_ROOT = Path(os.environ.get("ADAPTER_WORKSPACE_ROOT", RUNS_ROOT / "workspaces"))
 
-TOTAL_BUDGET_GB = int(os.environ.get("ADAPTER_TOTAL_BUDGET_GB", "100"))
-JOBS = int(os.environ.get("ADAPTER_JOBS", "4"))
+TOTAL_MEMORY_GB = int(os.environ.get("ADAPTER_TOTAL_MEMORY_GB", "100"))
+TOTAL_CPU_CORES = int(os.environ.get("ADAPTER_TOTAL_CPU_CORES", "24"))
+JOBS = int(os.environ.get("ADAPTER_JOBS", "8"))
 TASK_TIMEOUT_SECONDS = int(os.environ.get("ADAPTER_TASK_TIMEOUT", "7200"))
+SOLVER_TIMEOUT_SECONDS = int(os.environ.get("ADAPTER_SOLVER_TIMEOUT", "600"))
+FORMATTER_TIMEOUT_SECONDS = int(os.environ.get("ADAPTER_FORMATTER_TIMEOUT", "600"))
 
 # The paper's headline component: several candidate formulations, scored per
 # component, selected by the highest minimum score. The released code leaves it
@@ -148,6 +151,10 @@ def instance_path(paper_id: str, instance_index: int) -> Path:
 
 def problem_md_path(paper_id: str) -> Path:
     return PROBLEM_ROOT / paper_id / "input" / "problem.md"
+
+
+def solution_schema_path(paper_id: str) -> Path:
+    return PROBLEM_ROOT / paper_id / "hidden" / "solution_schema.json"
 
 
 def stage_workspace(paper_id: str) -> Path:

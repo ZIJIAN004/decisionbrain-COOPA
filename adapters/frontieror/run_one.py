@@ -101,6 +101,12 @@ def run(paper_id: str, case: dict, model_name: str, log_path: Path | None = None
     from apps.operations_research.formulation_utils import format_formulation_prompt
     from apps.operations_research.run import create_manager_agent
 
+    # Importing that module pulls in the four optimizer agents, each of which
+    # calls load_dotenv(override=True) and so replaces the environment set
+    # above with whatever a stray .env holds. Settling it afterwards is what
+    # keeps the endpoint ours and the search key inert.
+    config.configure_llm_env(force=True)
+
     model_id = config.litellm_model_id(model_name)
     workspace = config.stage_workspace(paper_id)
     question = config.build_question(paper_id)
@@ -140,6 +146,7 @@ def run(paper_id: str, case: dict, model_name: str, log_path: Path | None = None
         "instance_bytes": case["instance_bytes"],
         "formulation_type": case["formulation_type"],
         "selection": selection,
+        "web_search": "disabled",
         "workspace": str(workspace),
     }
     if log_path is not None:

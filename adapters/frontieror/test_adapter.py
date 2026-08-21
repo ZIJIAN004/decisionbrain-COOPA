@@ -143,6 +143,30 @@ def main() -> int:
     check("a bare name is qualified", config.litellm_model_id("deepseek-v4-flash") == "openai/deepseek-v4-flash")
     check("a qualified name is left alone", config.litellm_model_id("gemini/x") == "gemini/x")
 
+    print("web search:")
+    os.environ.pop("SERPER_API_KEY", None)
+    config.configure_llm_env()
+    check(
+        "an unset search key becomes the placeholder",
+        os.environ["SERPER_API_KEY"] == config.DISABLED_SEARCH_KEY,
+    )
+    os.environ["SERPER_API_KEY"] = "a-real-looking-key-from-a-stray-dotenv"
+    config.configure_llm_env(force=True)
+    check(
+        "a key already in the environment is overwritten",
+        os.environ["SERPER_API_KEY"] == config.DISABLED_SEARCH_KEY,
+    )
+    check(
+        "the placeholder is not a plausible key",
+        "disabled" in config.DISABLED_SEARCH_KEY and not config.DISABLED_SEARCH_KEY.startswith("sk-"),
+    )
+    os.environ["SERPER_API_KEY"] = "sk-something-real"
+    check(
+        "a real key is refused before a run starts",
+        any("web search must not work" in p for p in config.check_preconditions()),
+    )
+    config.configure_llm_env(force=True)
+
     print("retargeted optimizer prompts:")
     prompts_dir = config.REPO_ROOT / "apps" / "operations_research" / "or_agents" / "prompts"
     for path in sorted(prompts_dir.glob("*optimizer.yaml")):

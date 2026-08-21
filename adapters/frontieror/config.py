@@ -75,13 +75,28 @@ def litellm_model_id(model: str) -> str:
     return f"{os.environ.get('ADAPTER_LLM_PROVIDER', 'openai')}/{model}"
 
 
-def configure_llm_env() -> None:
-    """Point LiteLLM at the endpoint this host already uses.
+# Deliberately not a key. create_web_browsing_agent builds a Serper-backed
+# search tool for every optimizer agent, and the tool wants this variable set
+# before it will construct, so an unset variable does not disable web search --
+# it kills the task before any modelling happens. A placeholder lets the agents
+# be built while leaving the searches themselves inoperative, which is the
+# intended state: the instances are self-contained, and a working search would
+# give COOPA an outside channel that the system it is compared against does not
+# have. Never replace this with a real key.
+DISABLED_SEARCH_KEY = "disabled-no-web-search-for-benchmark-runs"
+
+
+def configure_llm_env(force: bool = False) -> None:
+    """Point LiteLLM at the endpoint this host already uses, and disable search.
 
     DecisionBrain's .env stores a full chat-completions URL in LLM_MODEL_URL and
     the key in LLM_API_KEY; LiteLLM's openai provider reads OPENAI_BASE_URL and
     OPENAI_API_KEY and appends the path itself, so the suffix is trimmed rather
     than duplicated. Nothing here ever prints a key.
+
+    Call it again with force=True after importing the upstream modules: several
+    of them call load_dotenv(override=True) at import, which would otherwise
+    replace what is set here with whatever a stray .env happens to contain.
     """
     url = os.environ.get("ADAPTER_BASE_URL") or os.environ.get("LLM_MODEL_URL")
     if url:
@@ -89,27 +104,25 @@ def configure_llm_env() -> None:
         # LiteLLM has read both names across versions, so both are set rather
         # than betting on which one the installed version looks at.
         for name in ("OPENAI_BASE_URL", "OPENAI_API_BASE"):
-            os.environ.setdefault(name, base)
+            if force or name not in os.environ:
+                os.environ[name] = base
     key = os.environ.get("ADAPTER_API_KEY") or os.environ.get("LLM_API_KEY")
-    if key and not os.environ.get("OPENAI_API_KEY"):
+    if key and (force or not os.environ.get("OPENAI_API_KEY")):
         os.environ["OPENAI_API_KEY"] = key
+
+    # Unconditional, and applied last: a real key reaching the search tool is
+    # the failure mode this guards against, so it is overwritten even when one
+    # is already present.
+    os.environ["SERPER_API_KEY"] = DISABLED_SEARCH_KEY
 
 
 def check_preconditions() -> list[str]:
-    """Name what is missing before a run starts rather than mid-task.
-
-    The web-browsing agent is built for every optimizer agent, and its Google
-    search tool wants SERPER_API_KEY at construction time, so a missing key does
-    not fail the search: it fails the whole task before any modelling happens.
-    """
+    """Name what is missing before a run starts rather than mid-task."""
     problems = []
     if not (os.environ.get("OPENAI_API_KEY") or os.environ.get("ADAPTER_API_KEY")):
         problems.append("no LLM key: set LLM_API_KEY (or OPENAI_API_KEY)")
-    if not os.environ.get("SERPER_API_KEY"):
-        problems.append(
-            "SERPER_API_KEY is unset: create_web_browsing_agent builds a Serper-backed "
-            "search tool for every optimizer agent, so every task fails at construction"
-        )
+    if os.environ.get("SERPER_API_KEY") != DISABLED_SEARCH_KEY:
+        problems.append("SERPER_API_KEY is not the disabled placeholder; web search must not work")
     if not INDEX_JSON.is_file():
         problems.append(f"suite index not found: {INDEX_JSON}")
     return problems

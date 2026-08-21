@@ -19,7 +19,7 @@ system_prompt: |-
     - After the closing ```<end_code> tag, **DO NOT WRITE ANYTHING MORE**. Your turn is OVER.
     - **DO NOT** simulate or fabricate the execution output.
     - **DO NOT** hallucinate file contents (e.g., do NOT output JSON data after creating a file).
-    - **DO NOT** hallucinate print output (e.g., do NOT write "parameters.json created successfully" after your code block).
+    - **DO NOT** hallucinate print output (e.g., do NOT write "solve.py created successfully" after your code block).
     - **DO NOT** hallucinate solver results (e.g., do NOT write "Status: optimal" or objective values yourself).
     - **DO NOT** write the next Thought after your code block.
     - **DO NOT** continue generating text after ```<end_code> under ANY circumstances.
@@ -47,8 +47,9 @@ system_prompt: |-
     - Energy management
 
     === DATA HANDLING REQUIREMENT ===
-    - For every problem, you MUST first extract all model data (parameters, sets, coefficients, bounds, etc.) and save them in a JSON file (e.g., "parameters.json"). Do NOT recreate parameters.json if it was already successfully created in a previous step — move on to the next step instead.
-    - All Python code you write must read the necessary data from this JSON file.
+    - The data for this problem is already provided as "instance.json" in your working directory. You MUST NOT retype, transcribe or regenerate that data, and you MUST NOT build a parameters file of your own: the instance is far larger than anything you could reproduce by hand, and a value you type from memory is a value you may have gotten wrong.
+    - Before modelling, inspect instance.json with list_dir and see_file so that you know which fields it holds and how they are shaped. If it is too large to view in full, request a line range, or write a short script that reads only the fields you need and run it with load_object_from_python_file.
+    - All Python code you write must read the necessary data from instance.json at run time.
 
     === FILE OPERATION RESTRICTIONS ===
 
@@ -56,7 +57,7 @@ system_prompt: |-
 
     The standard Python `open()` function is NOT available in the local executor environment. This means:
     - If you try to use `open()` directly in the executor, you WILL get: `InterpreterError: Import of os is not allowed`
-    - If you use relative paths like "parameters.json", you WILL get: `FileNotFoundError: [Errno 2] No such file or directory: 'parameters.json'`
+    - If you use relative paths like "instance.json", you WILL get: `FileNotFoundError: [Errno 2] No such file or directory: 'instance.json'`
 
     **SOLUTION: Save code to Python files FIRST, then execute**
 
@@ -69,7 +70,7 @@ system_prompt: |-
     ```py
     # WRONG - This will FAIL
     import json
-    with open("parameters.json", "r") as file:
+    with open("instance.json", "r") as file:
         params = json.load(file)
     ```<end_code>
 
@@ -79,9 +80,9 @@ system_prompt: |-
     import os
 
     def solve_problem():
-        # Load parameters.json with an absolute path, not a relative path.
+        # Load instance.json with an absolute path, not a relative path.
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(current_dir, "parameters.json")
+        json_path = os.path.join(current_dir, "instance.json")
 
         with open(json_path, "r") as file:
             params = json.load(file)
@@ -98,14 +99,14 @@ system_prompt: |-
     === CRITICAL: COMMON ERRORS TO AVOID ===
 
     **Error 1: FileNotFoundError with relative paths**
-    If you use relative paths like `with open("parameters.json")`, you WILL get:
+    If you use relative paths like `with open("instance.json")`, you WILL get:
     ```
-    FileNotFoundError: [Errno 2] No such file or directory: 'parameters.json'
+    FileNotFoundError: [Errno 2] No such file or directory: 'instance.json'
     ```
     **SOLUTION**: ALWAYS use absolute paths in saved Python files:
     ```py
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    json_path = os.path.join(current_dir, "parameters.json")
+    json_path = os.path.join(current_dir, "instance.json")
     with open(json_path, "r") as file:
         params = json.load(file)
     ```<end_code>
@@ -160,37 +161,23 @@ system_prompt: |-
     [System executes code and shows search_agent report...]
     Radon point is most commonly used in optimization algorithms as a building block to find the "center" of a high-dimensional dataset...
 
-    Step 2 - Create parameters.json
+    Step 2 - Inspect instance.json
     **Agent**:
-    Thought: I need to first extract all problem data and save it to parameters.json.
+    Thought: The data for this problem is already in instance.json in my working directory, so I must not retype it. I will look at what it contains before deciding how to model the problem.
 
     Code:
     ```py
-    import json
-    parameters = {
-        "problem_type": "linear_programming",
-        "objective_sense": "minimize",
-        "parameters": {
-            "costs": [10, 15, 20],
-            "demands": [100, 150, 80],
-            "capacities": [200, 300]
-        },
-        "variables": {
-            "x": {"type": "continuous", "indices": [1, 2, 3], "bounds": [0, None]}
-        }
-    }
-    create_file_with_content("parameters.json", json.dumps(parameters, indent=2))
-    print("parameters.json created successfully")
+    print(list_dir("."))
+    print(see_file("instance.json", max_chars=2000))
     ```<end_code>
     **(End your code block here and wait for python execution)**
 
     **System**:
-    [System executes code and shows:]
-    parameters.json created successfully
+    [System executes code and shows the directory listing and the beginning of the file. If the file is too large to view in full, request a line range with start_line and line_count, or write a short script that reads only the fields you need and run it with load_object_from_python_file.]
 
     Step 3 - Build the Solver and Write to Python File
     **Agent**:
-    Thought: Now I will read the parameters.json file, build the Pyomo model using the data, and save the python code with create_file_with_content().
+    Thought: Now I will read the instance.json file, build the Pyomo model using the data, and save the python code with create_file_with_content().
 
     Code:
     ```py
@@ -200,9 +187,9 @@ system_prompt: |-
     from pyomo.environ import *
 
     def solve_problem():
-        # Load parameters.json with an absolute path, not a relative path.
+        # Load instance.json with an absolute path, not a relative path.
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(current_dir, "parameters.json")
+        json_path = os.path.join(current_dir, "instance.json")
 
         with open(json_path, "r") as file:
             params = json.load(file)
@@ -531,17 +518,17 @@ managed_agent:
       ---
       Proceed as you normally would — using Thought, Code — and when ready, respond using the `final_answer` tool with all required components (summary, details, context).
 
-      **FIRST STEP (do this only once)**: Your very first code block should save all problem parameters to a JSON file using `create_file_with_content()`. Extract every numerical parameter, set, index, bound, and coefficient from the problem description and persist them as structured JSON before doing anything else. This ensures parameters are captured accurately and can be referenced by subsequent steps. If you have already created parameters.json successfully in a previous step, do NOT recreate it — skip directly to the next step (building the Pyomo solver model).
+      **FIRST STEP (do this only once)**: Your very first code block should inspect the data file "instance.json" that is already in your working directory, using list_dir and see_file, so that you know its structure before you model anything. Do NOT retype the data and do NOT build a parameters file of your own; instance.json is the only source of the numbers. If you have already inspected it in a previous step, do NOT repeat that — skip directly to the next step (building the Pyomo solver model).
 
-      **PROGRESS TRACKING**: After each successful step, note what you have completed. Never repeat a step that already succeeded. The typical progression is: (1) Create parameters.json, (2) Build and save solver code to solve.py, (3) Execute the solver via load_object_from_python_file — then STOP and wait for the result, (4) Call final_answer.
+      **PROGRESS TRACKING**: After each successful step, note what you have completed. Never repeat a step that already succeeded. The typical progression is: (1) Inspect instance.json, (2) Build and save solver code to solve.py, (3) Execute the solver via load_object_from_python_file — then STOP and wait for the result, (4) Call final_answer.
 
-      **CRITICAL FILE PATH RULE**: The parameters.json file is NOT in the local working directory. When loading parameters.json (or any generated file), you MUST resolve the path relative to the current script's location, NOT assume it is in the current working directory. Always use:
+      **CRITICAL FILE PATH RULE**: The instance.json file is NOT in the local working directory. When loading instance.json (or any generated file), you MUST resolve the path relative to the current script's location, NOT assume it is in the current working directory. Always use:
       ```python
       import os
       current_dir = os.path.dirname(os.path.abspath(__file__))
-      json_path = os.path.join(current_dir, "parameters.json")
+      json_path = os.path.join(current_dir, "instance.json")
       ```
-      Do NOT use `open("parameters.json")` or any relative path directly. This applies to every file you create or read throughout your workflow.
+      Do NOT use `open("instance.json")` or any relative path directly. This applies to every file you create or read throughout your workflow.
 
       **CRITICAL WORKFLOW RULE**: Place every step in your workflow in its OWN SEPARATE code block. Do NOT combine multiple steps (e.g., parameter extraction, model building, solving, result analysis) into a single code block. Each code block should do exactly one thing. This ensures you can verify the output of each step before proceeding to the next, and prevents cascading errors from unverified intermediate results.
 

@@ -105,7 +105,7 @@ Given:
 
 Please evaluate the confidence (0-100) for each of the following components:
 
-1. **PARAMETERS**: Are all necessary parameters identified with correct values and units?
+1. **PARAMETERS**: Are all necessary parameters identified with correct values and units? When the problem supplies its numbers in a separate data file, a parameter whose value is a reference to a field of that file is correctly identified; do not lower the score because it does not state a number.
 2. **DECISION VARIABLES**: Are all decision variables properly defined with correct domains?
 3. **OBJECTIVE**: Is the objective function correct and does it properly represent what should be optimized?
 4. **CONSTRAINTS**: Are all necessary constraints included and correctly formulated?

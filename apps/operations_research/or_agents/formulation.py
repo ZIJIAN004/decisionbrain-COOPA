@@ -215,6 +215,12 @@ Guidelines:
 - Copy the entire user prompt verbatim into the `question` field.
 - Enumerate every numeric fact or named constant inside `parameters`. Use meaningful names
   (e.g., cost_harry) and include a SourceReference with the exact quote and contextual note.
+- Some problems state their structure in prose and supply the numbers in a separate data file
+  named in the prompt. For a parameter whose value lives in that file, do not invent a number
+  and do not try to reproduce the file: set `data_type` to "str" and `value` to a reference of
+  the form "<filename>:<field>" naming where the value will be found, and say in `description`
+  what the field means. Parameters the prompt does state as numbers are still enumerated as
+  numbers.
 - Decision variables must capture domains precisely (binary/integer/continuous, bounds,
   logical implications). Use SourceReference entries quoting the sentence that motivated
   the variable or domain.

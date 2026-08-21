@@ -4,6 +4,37 @@ from typing import Any
 import importlib.util
 
 
+# Bounded-read limits. Ported from DecisionBrain's workspace tools so that no
+# system can inspect its instance more cheaply than another: same caps, same
+# head/marker/tail truncation. Without them see_file returns whole files, which
+# an instance measured in hundreds of kilobytes cannot survive.
+TRUNCATION_NOTICE = "\n[truncated]\n"
+MAX_OUTPUT_CHARS = 12_000
+MAX_READ_BYTES = 1_000_000
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Keep the head and the tail, drop the middle, and say so.
+
+    The marker is the only evidence the agent has that a range was not returned
+    in full, which is why truncation returns text rather than raising.
+    """
+    if len(text) <= limit:
+        return text
+    if limit <= len(TRUNCATION_NOTICE) + 20:
+        return text[:limit]
+    head_len = (limit - len(TRUNCATION_NOTICE)) // 2
+    tail_len = limit - len(TRUNCATION_NOTICE) - head_len
+    return f"{text[:head_len]}{TRUNCATION_NOTICE}{text[-tail_len:]}"
+
+
+def _format_size(size: int) -> str:
+    for unit, scale in (("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024)):
+        if size >= scale:
+            return f"{size / scale:.1f} {unit}"
+    return f"{size} B"
+
+
 class ListDir(Tool):
     name = "list_dir"
     description = (
@@ -27,8 +58,21 @@ class ListDir(Tool):
         files = os.listdir(chosen_dir)
         if files == []:
             return f"The directory {directory} is empty."
-        else:
-            return '\n'.join(files)
+        lines = []
+        for name in sorted(files):
+            entry = os.path.join(chosen_dir, name)
+            if os.path.isdir(entry):
+                lines.append(f"{name}/")
+                continue
+            # The size is what tells the agent whether a whole-file see_file is
+            # even possible, so it is shown rather than left to be discovered by
+            # a failed read.
+            size = os.path.getsize(entry)
+            label = f"{name}  ({_format_size(size)})"
+            if size > MAX_READ_BYTES:
+                label += " [too large to view in full; read a line range or write a script]"
+            lines.append(label)
+        return '\n'.join(lines)
 
     def _safe_path(self, path: str) -> str:
         # Prevent absolute paths and directory traversal
@@ -42,28 +86,101 @@ class ListDir(Tool):
 class SeeFile(Tool):
     name = "see_file"
     description = (
-        "View the content of a chosen plain text file (e.g., .txt, .md, .py, .log). "
-        "Not suitable for binary files such as .pdf, .docx, .xlsx, or images."
-        "Note: only files under the working directory are accessible."
+        "View the content of a chosen plain text file (e.g., .txt, .md, .py, .log, .json), "
+        "with 1-based line numbers. Not suitable for binary files such as .pdf, .docx, "
+        ".xlsx, or images. Note: only files under the working directory are accessible.\n"
+        f"Whole-file views of files larger than {MAX_READ_BYTES} bytes are refused, and every "
+        f"response is capped at {MAX_OUTPUT_CHARS} characters; max_chars can only lower that "
+        "cap. Past the cap the result is the head of the range, the marker [truncated], then "
+        "the tail: the middle is dropped and no error is raised, so treat that marker as proof "
+        "that you did not see the whole range. For a large multi-line file, pass start_line and "
+        "line_count and page through it. For a large single-line file, such as JSON written "
+        "without newlines, paging does not help: write a short Python script that opens the "
+        "file and returns only the parts you need, then run it with "
+        "load_object_from_python_file."
     )
-    inputs = {"filename": {"type": "string", "description": "Name of the file to check."}}
+    inputs = {
+        "filename": {"type": "string", "description": "Name of the file to check."},
+        "start_line": {
+            "type": "integer",
+            "description": "Optional 1-based first line to show; defaults to the start of the file.",
+            "nullable": True,
+        },
+        "line_count": {
+            "type": "integer",
+            "description": "Optional number of lines to show from start_line; defaults to the rest of the file.",
+            "nullable": True,
+        },
+        "max_chars": {
+            "type": "integer",
+            "description": f"Optional output cap, at most {MAX_OUTPUT_CHARS} characters.",
+            "nullable": True,
+        },
+    }
     output_type = "string"
 
     def __init__(self, working_dir):
         super().__init__()
         self.working_dir = working_dir
 
-    def forward(self, filename: str) -> str:
+    def forward(
+        self,
+        filename: str,
+        start_line: int = None,
+        line_count: int = None,
+        max_chars: int = None,
+    ) -> str:
         try:
             filepath = self._safe_path(filename)
         except PermissionError as e:
             return str(e)
         if not os.path.exists(filepath):
             return f"The file {filename} does not exist."
-        with open(filepath, "r") as file:
-            lines = file.readlines()
-        formatted_lines = [f"{i+1}:{line}" for i, line in enumerate(lines)]
-        return "".join(formatted_lines)
+        if not os.path.isfile(filepath):
+            return f"The path {filename} is not a file."
+
+        limit = MAX_OUTPUT_CHARS if max_chars is None else max(1, min(int(max_chars), MAX_OUTPUT_CHARS))
+        first = 1 if start_line is None else max(1, int(start_line))
+        count = None if line_count is None else max(1, int(line_count))
+
+        size = os.path.getsize(filepath)
+        if start_line is None and line_count is None and size > MAX_READ_BYTES:
+            # Refusing is more useful than truncating here: the agent learns the
+            # size and is told the two ways in, instead of receiving a fragment
+            # of an unknown whole.
+            return (
+                f"The file {filename} is {_format_size(size)}, larger than the "
+                f"{_format_size(MAX_READ_BYTES)} limit for viewing a file in full. "
+                "Either request a line range with start_line and line_count, or write a "
+                "script that reads only what you need and run it with "
+                "load_object_from_python_file."
+            )
+
+        collected = []
+        used = 0
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="replace") as file:
+                for number, line in enumerate(file, start=1):
+                    if number < first:
+                        continue
+                    if count is not None and number >= first + count:
+                        break
+                    entry = f"{number}:{line}"
+                    collected.append(entry)
+                    used += len(entry)
+                    # Stop well past the output cap rather than reading the rest
+                    # of a large file only to throw it away. Anything collected
+                    # beyond the cap is marked by _truncate, so breaking here
+                    # cannot hide a partial range from the agent.
+                    if used > limit * 4:
+                        break
+        except OSError as e:
+            return f"The file {filename} could not be read: {e}"
+
+        if not collected:
+            return f"The file {filename} has fewer than {first} lines, so that range is empty."
+
+        return _truncate("".join(collected), limit)
 
     def _safe_path(self, path: str) -> str:
         # Prevent absolute paths and directory traversal

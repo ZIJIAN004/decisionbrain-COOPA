@@ -32,8 +32,17 @@ def build_model(model_name):
         return LiteLLMModel(model_id=model_name, reasoning_effort="high")
     elif any(x in model_name for x in ["gpt", "thinking"]):
         return LiteLLMModel(model_id=model_name)
+    elif "/" in model_name:
+        # A LiteLLM provider-qualified id such as "openai/deepseek-v4-flash" or
+        # "deepseek/deepseek-chat". The whitelist above cannot name every model
+        # a study might evaluate, and LiteLLM already resolves the provider and
+        # its endpoint from the prefix and the matching environment variables.
+        return LiteLLMModel(model_id=model_name)
     else:
-        raise ValueError(f"Unsupported model name: {model_name}")
+        raise ValueError(
+            f"Unsupported model name: {model_name}. Pass a provider-qualified id "
+            f"such as openai/{model_name} to route it through LiteLLM."
+        )
 
 
 def get_supported_models():
